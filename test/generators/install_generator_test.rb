@@ -1,0 +1,61 @@
+# frozen_string_literal: true
+
+require "test_helper"
+require "rails/generators"
+require "rails/generators/test_case"
+require "generators/zero_rails_adapter/install/install_generator"
+require "generators/zero_rails_adapter/mutator/mutator_generator"
+require "generators/zero_rails_adapter/typescript/typescript_generator"
+
+class InstallGeneratorTest < Rails::Generators::TestCase
+  tests ZeroRailsAdapter::Generators::InstallGenerator
+  destination File.expand_path("../../tmp/generator", __dir__)
+  setup :prepare_destination
+
+  def test_generates_initializer_without_parallel_tracking_tables
+    run_generator
+
+    assert_file "config/initializers/zero_rails_adapter.rb" do |contents|
+      assert_match "ZeroRailsAdapter.configure", contents
+      assert_match "ZERO_MUTATE_API_KEY", contents
+    end
+    assert_no_migration "db/migrate/create_zero_rails_adapter_tables.rb"
+  end
+end
+
+class TypeScriptRailsGeneratorTest < Rails::Generators::TestCase
+  tests ZeroRailsAdapter::Generators::TypeScriptGenerator
+  destination File.expand_path("../../tmp/typescript_generator", __dir__)
+  setup :prepare_destination
+
+  def test_generates_schema_and_generic_crud_mutators
+    ZeroRailsAdapter.configuration.model_provider = -> { [Article, ArticleEvent] }
+
+    run_generator ["app/javascript/zero"]
+
+    assert_file "app/javascript/zero/schema.ts" do |contents|
+      assert_includes contents, "const articles = table('articles')"
+    end
+    assert_file "app/javascript/zero/mutators.ts" do |contents|
+      assert_includes contents, "await tx.mutate.articles.insert"
+    end
+  ensure
+    ZeroRailsAdapter.reset_configuration!
+  end
+end
+
+class MutatorGeneratorTest < Rails::Generators::TestCase
+  tests ZeroRailsAdapter::Generators::MutatorGenerator
+  destination File.expand_path("../../tmp/mutator_generator", __dir__)
+  setup :prepare_destination
+
+  def test_generates_a_conventional_active_model_mutator
+    run_generator ["books.create"]
+
+    assert_file "app/mutators/books/create_mutator.rb" do |contents|
+      assert_match "class Books::CreateMutator < ZeroRailsAdapter::Mutator", contents
+      assert_match 'mutation_name "books.create"', contents
+      assert_match "def perform", contents
+    end
+  end
+end
