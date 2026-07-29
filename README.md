@@ -50,6 +50,10 @@ bundle install
 bin/rails generate zero_rails_adapter:install
 ```
 
+The generated initializer reads `ZERO_MUTATE_API_KEY` with `ENV.fetch`, so a
+missing key fails during application boot instead of disabling request
+verification.
+
 Mount the Engine:
 
 ```ruby
@@ -285,6 +289,17 @@ and writable-attribute interfaces below.
 The generated initializer supports `ZERO_MUTATE_API_KEY` and verifies
 zero-cache's `X-Api-Key` header using a constant-time comparison.
 
+All mutation security gates fail closed by default:
+
+- `request_verifier` returns `false`.
+- `authenticator` raises `UnauthorizedError`.
+- The global `authorizer` returns `false`.
+- The generic CRUD `crud_authorizer` returns `false`.
+
+Applications must configure each gate they use explicitly. An application that
+intentionally permits anonymous identities must still install an authenticator
+that returns `ZeroRailsAdapter::Identity.new`.
+
 The authentication interface receives the Rails request. It can integrate with
 Devise/Warden, any JWT library, a session, or an application-specific
 authentication system:
@@ -309,6 +324,10 @@ authorizer then receives the model class as `target` for create, or the loaded
 record for update and destroy:
 
 ```ruby
+config.authorizer = lambda do |context, mutation|
+  MutationPolicy.allowed?(context.current_user, mutation.name)
+end
+
 config.crud_authorizer = lambda do |context, action, target, attributes|
   MutationPolicy.new(
     context.current_user,
@@ -372,6 +391,10 @@ available:
 ZeroRailsAdapter.define_mutator "projects.archive" do
   attribute :id, :string
 
+  authorize_with do |context|
+    context.current_user.present?
+  end
+
   perform do
     Project.find(id).archive!(actor: context.current_user)
   end
@@ -379,7 +402,9 @@ end
 ```
 
 Mutators use Active Model attributes and validations and share a transaction
-with application writes and LMID tracking.
+with application writes and LMID tracking. A custom mutator without an
+`authorize_with` callback is rejected. To rely intentionally on the global
+authorizer alone, the mutator must still declare `authorize_with { true }`.
 
 ## Mutation Ordering and Transaction Semantics
 
@@ -391,11 +416,19 @@ For each `(schema, clientGroupID, clientID)`, the adapter:
 4. Executes the authorized Active Record operation inside a transaction.
 5. Updates the LMID atomically.
 
-When a business validation or callback fails, the first transaction rolls
-back. A second transaction advances the LMID and stores a structured `app`
-result so that a bad mutation is not retried forever and later mutations can
-continue. If the second transaction also fails, the adapter returns a
-retry-safe `PushFailed` response.
+When an explicit `ApplicationError`, argument validation error, or supported
+Active Model/Active Record validation or lifecycle error occurs, the first
+transaction rolls back. A second transaction advances the LMID and stores a
+structured `app` result so that a bad mutation is not retried forever and later
+mutations can continue.
+
+Database failures and unexpected Ruby exceptions do not advance LMID or store
+a mutation result. They return a retry-safe `PushFailed`, so the same mutation
+ID can be retried after the underlying problem is fixed. Public database and
+internal failure messages are fixed and sanitized; the configured server
+logger receives the original exception and backtrace. If persisting an
+application failure also fails, the adapter likewise returns `PushFailed`
+without advancing LMID.
 
 Each mutation owns an independent transaction. A later failure in the same
 HTTP batch does not roll back earlier committed mutations.
@@ -448,9 +481,11 @@ bundle exec rake contract
 
 That task compiles the generated TypeScript, starts PostgreSQL with logical
 replication, starts the real zero-cache and Rails mutation endpoint, then uses
-a Zero client to mutate and query replicated rows. The generated fixture
-includes a separate Zero key and a two-hop relationship. The task also verifies
-LMID advancement, duplicate-mutation handling, failure skipping, and
+a Zero client to mutate and query replicated rows. The generated fixture uses
+UUID primary and foreign keys and includes a separate Zero key and a two-hop
+relationship. The task also verifies request verification, authentication,
+global and mutator authorization, sanitized retry-safe failures, same-ID
+replay, LMID advancement, duplicate-mutation handling, failure skipping, and
 `_zero_cleanupResults`. The contract runs as its own CI job.
 
 See [`examples/nextjs`](examples/nextjs) for a Next.js integration fixture.

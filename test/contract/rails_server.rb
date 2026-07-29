@@ -25,15 +25,36 @@ class CreateContractBook < ZeroRailsAdapter::Mutator
   attribute :sync_id, :string
   attribute :title, :string
   validates :id, :sync_id, :title, presence: true
+  authorize_with { true }
 
   def perform
     ContractBook.create!(id:, sync_id:, title:)
-    ContractLabel.create!(id: "label-#{id}", name: "Label #{title}")
+    label = ContractLabel.create!(name: "Label #{title}")
     ContractBookLabel.create!(
-      id: "link-#{id}",
       book_id: id,
-      label_id: "label-#{id}"
+      label_id: label.id
     )
+  end
+end
+
+class RetryContractMutation < ZeroRailsAdapter::Mutator
+  mutation_name "contract.retry"
+  authorize_with { true }
+
+  def perform
+    if context.rack_request.headers["X-Contract-Fail"] == "true"
+      raise NoMethodError, "private contract implementation detail"
+    end
+
+    {"replayed" => true}
+  end
+end
+
+class MissingAuthorizationContractMutation < ZeroRailsAdapter::Mutator
+  mutation_name "contract.missing_authorization"
+
+  def perform
+    raise "must not run"
   end
 end
 
@@ -55,8 +76,20 @@ ZeroRailsAdapter.configure do |config|
   config.request_verifier = ZeroRailsAdapter::RequestVerifiers::ApiKey.new(
     key: ENV.fetch("ZERO_MUTATE_API_KEY")
   )
+  config.authenticator = lambda do |request|
+    if request.authorization == "Bearer invalid"
+      raise ZeroRailsAdapter::UnauthorizedError, "Invalid token"
+    end
+
+    ZeroRailsAdapter::Identity.new
+  end
+  config.authorizer = lambda do |context, _mutation|
+    context.rack_request.headers["X-Contract-Deny"] != "true"
+  end
 end
 ZeroRailsAdapter.registry.register(CreateContractBook)
+ZeroRailsAdapter.registry.register(RetryContractMutation)
+ZeroRailsAdapter.registry.register(MissingAuthorizationContractMutation)
 ZeroContract::Application.initialize!
 
 port = Integer(ENV.fetch("PORT"))

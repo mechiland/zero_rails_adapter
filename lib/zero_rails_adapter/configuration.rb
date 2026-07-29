@@ -9,9 +9,11 @@ module ZeroRailsAdapter
       :relationship_provider
 
     def initialize
-      @authenticator = ->(_request) { Identity.new }
-      @request_verifier = ->(_request) { true }
-      @authorizer = ->(_context, _mutation) { true }
+      @authenticator = lambda do |_request|
+        raise UnauthorizedError, "Authentication is not configured"
+      end
+      @request_verifier = ->(_request) { false }
+      @authorizer = ->(_context, _mutation) { false }
       @crud_authorizer = ->(_context, _action, _target, _attributes) { false }
       @logger = defined?(Rails) ? Rails.logger : nil
       @transaction_class = ActiveRecord::Base

@@ -8,6 +8,7 @@ class MutatorTest < ZeroTestCase
 
     attribute :title, :string
     validates :title, presence: true
+    authorize_with { true }
 
     def perform
       Book.create!(title:, owner_id: context.current_user.id)
@@ -47,11 +48,28 @@ class MutatorTest < ZeroTestCase
   def test_mutator_can_handle_a_non_object_json_argument
     echo = Class.new(ZeroRailsAdapter::Mutator) do
       mutation_name "mutator_test|echo"
+      authorize_with { true }
 
       define_method(:perform) { {"echo" => arguments} }
     end
     context = ZeroRailsAdapter::Context.new(identity: ZeroRailsAdapter::Identity.new)
 
     assert_equal({"echo" => "hello"}, echo.call("hello", context:))
+  end
+
+  def test_mutator_without_explicit_authorization_is_rejected
+    mutator = Class.new(ZeroRailsAdapter::Mutator) do
+      mutation_name "mutator_test|missing_authorization"
+      define_method(:perform) { raise "must not run" }
+    end
+    context = ZeroRailsAdapter::Context.new(
+      identity: ZeroRailsAdapter::Identity.new
+    )
+
+    error = assert_raises(ZeroRailsAdapter::ForbiddenError) do
+      mutator.call({}, context:)
+    end
+
+    assert_equal "Mutator authorization is not configured", error.message
   end
 end

@@ -6,11 +6,9 @@ ZeroRailsAdapter.configure do |config|
 
   # Verify that calls came from your zero-cache instance.
   # Configure zero-cache with ZERO_MUTATE_API_KEY using the same value.
-  if ENV["ZERO_MUTATE_API_KEY"].present?
-    config.request_verifier = ZeroRailsAdapter::RequestVerifiers::ApiKey.new(
-      key: ENV.fetch("ZERO_MUTATE_API_KEY")
-    )
-  end
+  config.request_verifier = ZeroRailsAdapter::RequestVerifiers::ApiKey.new(
+    key: ENV.fetch("ZERO_MUTATE_API_KEY")
+  )
 
   # Return an Identity from any authentication system (Devise, JWT, cookies, etc.).
   # config.authenticator = lambda do |request|

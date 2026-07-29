@@ -27,7 +27,11 @@ module ZeroRailsAdapter
       ZeroRailsAdapter.configuration.logger&.error(
         "ZeroRailsAdapter request failed: #{error.class}: #{error.message}"
       )
-      render json: push_failed("internal", error.message, []), status: :internal_server_error
+      render json: push_failed(
+        "internal",
+        Processor::INTERNAL_ERROR_MESSAGE,
+        []
+      ), status: :internal_server_error
     end
 
     private
