@@ -5,6 +5,7 @@ require "rails/generators"
 require "rails/generators/test_case"
 require "generators/zero_rails_adapter/install/install_generator"
 require "generators/zero_rails_adapter/mutator/mutator_generator"
+require "generators/zero_rails_adapter/publication/publication_generator"
 require "generators/zero_rails_adapter/typescript/typescript_generator"
 
 class InstallGeneratorTest < Rails::Generators::TestCase
@@ -29,7 +30,14 @@ class TypeScriptRailsGeneratorTest < Rails::Generators::TestCase
   setup :prepare_destination
 
   def test_generates_schema_and_generic_crud_mutators
-    ZeroRailsAdapter.configuration.model_provider = -> { [Article, ArticleEvent] }
+    ZeroRailsAdapter.configuration.published_schema = lambda do
+      {
+        Article => Article.column_names - %w[password_hash internal_notes],
+        ArticleEvent => ArticleEvent.column_names
+      }
+    end
+    ZeroRailsAdapter.configuration.crud_model_provider =
+      -> { [Article, ArticleEvent] }
 
     run_generator ["app/javascript/zero"]
 
@@ -38,6 +46,26 @@ class TypeScriptRailsGeneratorTest < Rails::Generators::TestCase
     end
     assert_file "app/javascript/zero/mutators.ts" do |contents|
       assert_includes contents, "await tx.mutate.articles.insert"
+    end
+  ensure
+    ZeroRailsAdapter.reset_configuration!
+  end
+end
+
+class PublicationRailsGeneratorTest < Rails::Generators::TestCase
+  tests ZeroRailsAdapter::Generators::PublicationGenerator
+  destination File.expand_path("../../tmp/publication_generator", __dir__)
+  setup :prepare_destination
+
+  def test_generates_a_reviewable_publication_sql_file
+    ZeroRailsAdapter.configuration.published_schema =
+      -> { {Article => %w[id title]} }
+
+    run_generator ["zero_app"]
+
+    assert_file "db/zero_publication.sql" do |contents|
+      assert_includes contents, 'CREATE PUBLICATION "zero_app" FOR TABLE'
+      assert_includes contents, '"articles" ("id", "title")'
     end
   ensure
     ZeroRailsAdapter.reset_configuration!

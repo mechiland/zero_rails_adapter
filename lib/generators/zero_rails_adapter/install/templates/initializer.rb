@@ -26,10 +26,19 @@ ZeroRailsAdapter.configure do |config|
   # Raise ZeroRailsAdapter::ForbiddenError to reject a mutation.
   # config.authorizer = ->(context, mutation) { YourPolicy.authorize!(context, mutation) }
 
-  # Generic CRUD resolves "articles.create", "articles.update", and
-  # "articles.destroy" against this allowlist. The default is every named,
-  # non-abstract Active Record model; an explicit list is recommended.
-  # config.model_provider = -> { [Article, Comment] }
+  # Fail-closed table and column allowlist used by schema.ts and publication
+  # SQL generation. No tables or columns are published by default.
+  # config.published_schema = lambda do
+  #   {
+  #     Article => %w[id title body author_id created_at updated_at],
+  #     Comment => %w[id article_id body author_id created_at updated_at]
+  #   }
+  # end
+
+  # Generic CRUD is independently opt-in. Publishing a model does not make it
+  # writable. The default crud_authorizer below also rejects every operation.
+  # Keep this empty when writes require domain-specific mutators.
+  # config.crud_model_provider = -> { [Article, Comment] }
 
   # Authorize generic CRUD independently of Devise/JWT/Pundit/etc. target is
   # the model class for create, and the loaded record for update/destroy.

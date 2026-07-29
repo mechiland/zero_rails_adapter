@@ -25,5 +25,7 @@ ZERO_MUTATE_API_KEY=development-secret
 ```
 
 The Rails application must mount the Engine at `/zero`, use the generated API
-key verifier, and expose `Book` through `config.model_provider`. No Ruby
-mutator class is needed for `books.create/update/destroy`.
+key verifier, publish explicit `Book` columns through
+`config.published_schema`, and opt `Book` into
+`config.crud_model_provider`. No Ruby mutator class is needed for
+`books.create/update/destroy`.

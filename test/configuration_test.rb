@@ -11,6 +11,8 @@ class ConfigurationTest < ZeroTestCase
       [context, action, target, attributes]
     end
     generated_attributes = ->(model, action) { [model, action] }
+    published_schema = -> { {Article => %w[id title]} }
+    crud_model_provider = -> { [Article] }
 
     ZeroRailsAdapter.configure do |config|
       config.authenticator = authenticator
@@ -18,6 +20,8 @@ class ConfigurationTest < ZeroTestCase
       config.authorizer = authorizer
       config.crud_authorizer = crud_authorizer
       config.generated_attributes = generated_attributes
+      config.published_schema = published_schema
+      config.crud_model_provider = crud_model_provider
       config.transaction_class = Book
     end
 
@@ -27,6 +31,9 @@ class ConfigurationTest < ZeroTestCase
     assert_same crud_authorizer, ZeroRailsAdapter.configuration.crud_authorizer
     assert_same generated_attributes,
       ZeroRailsAdapter.configuration.generated_attributes
+    assert_same published_schema, ZeroRailsAdapter.configuration.published_schema
+    assert_same crud_model_provider,
+      ZeroRailsAdapter.configuration.crud_model_provider
     assert_same Book, ZeroRailsAdapter.configuration.transaction_class
   end
 
@@ -41,7 +48,7 @@ class ConfigurationTest < ZeroTestCase
     assert_equal({}, identity.claims)
     assert ZeroRailsAdapter.configuration.request_verifier.call(Object.new)
     assert ZeroRailsAdapter.configuration.authorizer.call(Object.new, Object.new)
-    assert ZeroRailsAdapter.configuration.crud_authorizer.call(
+    refute ZeroRailsAdapter.configuration.crud_authorizer.call(
       Object.new,
       :create,
       Object.new,
@@ -51,10 +58,18 @@ class ConfigurationTest < ZeroTestCase
     request = Struct.new(:schema).new("zero_0")
     assert_instance_of ZeroRailsAdapter::Storage::ZeroSchema,
       ZeroRailsAdapter.configuration.storage_provider.call(request)
+    assert_empty ZeroRailsAdapter.configuration.published_schema.call
+    assert_empty ZeroRailsAdapter.configuration.crud_model_provider.call
+    assert_nil ZeroRailsAdapter.configuration.model_resolver.call("articles")
   end
 
-  def test_model_provider_is_also_the_crud_allowlist
-    ZeroRailsAdapter.configuration.model_provider = -> { [Article] }
+  def test_published_models_are_not_implicitly_exposed_to_generic_crud
+    ZeroRailsAdapter.configuration.published_schema =
+      -> { {Article => %w[id title]} }
+
+    assert_nil ZeroRailsAdapter.configuration.model_resolver.call("articles")
+
+    ZeroRailsAdapter.configuration.crud_model_provider = -> { [Article] }
 
     assert_same Article,
       ZeroRailsAdapter.configuration.model_resolver.call("articles")

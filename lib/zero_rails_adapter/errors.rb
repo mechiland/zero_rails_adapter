@@ -17,6 +17,7 @@ module ZeroRailsAdapter
   class UnauthorizedError < Error; end
   class UnknownMutatorError < ApplicationError; end
   class UnsupportedColumnTypeError < Error; end
+  class UnsafePublicationError < Error; end
 
   class ProtocolError < Error
     attr_reader :mutation_ids

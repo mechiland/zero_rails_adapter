@@ -5,18 +5,19 @@ module ZeroRailsAdapter
     attr_accessor :authenticator, :request_verifier, :authorizer, :logger,
       :transaction_class, :storage_provider, :crud_authorizer,
       :writable_attributes, :generated_attributes, :model_resolver,
-      :model_provider
+      :published_schema, :crud_model_provider
 
     def initialize
       @authenticator = ->(_request) { Identity.new }
       @request_verifier = ->(_request) { true }
       @authorizer = ->(_context, _mutation) { true }
-      @crud_authorizer = ->(_context, _action, _target, _attributes) { true }
+      @crud_authorizer = ->(_context, _action, _target, _attributes) { false }
       @logger = defined?(Rails) ? Rails.logger : nil
       @transaction_class = ActiveRecord::Base
-      @model_provider = -> { default_models }
+      @published_schema = -> { {} }
+      @crud_model_provider = -> { [] }
       @model_resolver = lambda do |resource|
-        allowed_models = Array(model_provider.call).select do |model|
+        allowed_models = Array(crud_model_provider.call).select do |model|
           active_record_model?(model)
         end
         candidate = resource.to_s.classify.safe_constantize
@@ -31,16 +32,6 @@ module ZeroRailsAdapter
     end
 
     private
-
-    def default_models
-      application = Rails.application if defined?(Rails) && Rails.respond_to?(:application)
-      application&.eager_load!
-      ActiveRecord::Base.descendants.select do |model|
-        active_record_model?(model) &&
-          model.name.present? &&
-          !model.name.start_with?("ZeroRailsAdapter::")
-      end
-    end
 
     def default_writable_attributes(model)
       model.column_names -

@@ -55,6 +55,10 @@ ActiveRecord::Schema.define do
     t.string :id, null: false, primary_key: true
     t.string :title, null: false
     t.boolean :published, null: false, default: false
+    t.integer :review_state, null: false, default: 0
+    t.string :visibility, null: false, default: "public"
+    t.string :password_hash
+    t.string :internal_notes
     t.json :metadata
     t.timestamps null: false
   end
@@ -71,6 +75,9 @@ class Book < ActiveRecord::Base
 end
 
 class Article < ActiveRecord::Base
+  enum :review_state, {draft: 0, reviewed: 1}
+  enum :visibility, {public: "public", private: "private"}, prefix: true
+
   has_many :article_events, dependent: :destroy
   has_one :latest_event, -> { order(id: :desc) }, class_name: "ArticleEvent"
 
