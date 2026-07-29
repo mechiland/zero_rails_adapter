@@ -18,7 +18,7 @@ connection.execute("DROP TABLE IF EXISTS contract_labels")
 connection.execute("DROP TABLE IF EXISTS contract_books")
 connection.execute <<~SQL
   CREATE TABLE contract_books (
-    id text PRIMARY KEY,
+    id uuid PRIMARY KEY,
     sync_id text NOT NULL UNIQUE,
     title text NOT NULL,
     created_at timestamp NOT NULL,
@@ -27,15 +27,15 @@ connection.execute <<~SQL
 SQL
 connection.execute <<~SQL
   CREATE TABLE contract_labels (
-    id text PRIMARY KEY,
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     name text NOT NULL
   )
 SQL
 connection.execute <<~SQL
   CREATE TABLE contract_book_labels (
-    id text PRIMARY KEY,
-    book_id text NOT NULL REFERENCES contract_books(id),
-    label_id text NOT NULL REFERENCES contract_labels(id)
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    book_id uuid NOT NULL REFERENCES contract_books(id),
+    label_id uuid NOT NULL REFERENCES contract_labels(id)
   )
 SQL
 

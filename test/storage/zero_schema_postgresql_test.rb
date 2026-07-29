@@ -7,6 +7,7 @@ class ZeroSchemaPostgresqlTest < ZeroTestCase
     mutation_name "postgres_books.create"
     attribute :title, :string
     validates :title, presence: true
+    authorize_with { true }
 
     def perform
       Book.create!(title:, owner_id: 1)
@@ -18,6 +19,8 @@ class ZeroSchemaPostgresqlTest < ZeroTestCase
     super
     create_zero_schema
     ZeroRailsAdapter.reset_configuration!
+    ZeroRailsAdapter.configuration.authorizer =
+      ->(_context, _mutation) { true }
     ZeroRailsAdapter.registry.register(FailingBook)
   end
 

@@ -8,6 +8,45 @@ changes; those changes are called out explicitly below.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-07-29
+
+### Security
+
+- Changed request verification, authentication, and global mutation
+  authorization defaults to fail closed. Applications must now configure every
+  gate explicitly.
+- Custom mutators without an `authorize_with` callback are rejected instead of
+  executing implicitly. The mutator generator scaffolds an explicit
+  deny-by-default callback.
+- Generated initializers now require `ZERO_MUTATE_API_KEY` with `ENV.fetch`
+  instead of silently disabling request verification when the variable is
+  absent.
+- Internal and database `PushFailed` responses no longer expose raw exception
+  messages. Full errors remain available to the configured server logger.
+
+### Fixed
+
+- Persist only explicit application and validation failures before advancing
+  LMID. Database failures and unexpected Ruby exceptions now roll back the
+  mutation completely and return a retry-safe `PushFailed`, allowing the same
+  mutation ID to succeed after the underlying problem is fixed.
+
+### Changed
+
+- Expanded the Zero 1.8 integration contract to use PostgreSQL UUID primary
+  keys and foreign keys and to cover request verification, authentication,
+  global and mutator authorization, sanitized internal failures, unchanged
+  LMID state, and successful same-ID replay.
+- Updated the contract's direct `ws` dependency from 8.18.3 to 8.21.1.
+
+### Upgrade notes
+
+Configure `request_verifier`, `authenticator`, and `authorizer` explicitly
+before accepting mutation traffic. Add `authorize_with` to every custom
+mutator, including mutators that intentionally rely only on the global
+authorizer. Regenerate the initializer if the application still conditionally
+configures `ZERO_MUTATE_API_KEY`.
+
 ## [0.3.0] - 2026-07-29
 
 ### Breaking changes
@@ -105,6 +144,7 @@ examples.
 - Added Active Support mutation notifications and Rails/PostgreSQL test
   coverage.
 
-[Unreleased]: https://github.com/mechiland/zero_rails_adapter/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/mechiland/zero_rails_adapter/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/mechiland/zero_rails_adapter/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/mechiland/zero_rails_adapter/releases/tag/v0.3.0
 [0.2.0]: https://rubygems.org/gems/zero-rails-adapter/versions/0.2.0

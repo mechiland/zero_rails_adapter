@@ -2,6 +2,7 @@
 
 require "test_helper"
 require_relative "dummy/config/application"
+require "stringio"
 
 Dummy::Application.initialize! unless Dummy::Application.initialized?
 
@@ -11,6 +12,7 @@ class ControllerTest < ActionDispatch::IntegrationTest
   class CreateBook < ZeroRailsAdapter::Mutator
     mutation_name "controller_books|create"
     attribute :title, :string
+    authorize_with { true }
 
     def perform
       Book.create!(title:, owner_id: context.current_user.id)
@@ -20,6 +22,12 @@ class ControllerTest < ActionDispatch::IntegrationTest
 
   def setup
     ZeroRailsAdapter.reset_configuration!
+    ZeroRailsAdapter.configuration.request_verifier = ->(_request) { true }
+    ZeroRailsAdapter.configuration.authenticator = lambda do |_request|
+      ZeroRailsAdapter::Identity.new(user_id: "1", current_user: User.new(1))
+    end
+    ZeroRailsAdapter.configuration.authorizer =
+      ->(_context, _mutation) { true }
     ZeroRailsAdapter.configuration.storage_provider = lambda do |request|
       ZeroRailsAdapter::Storage::RailsTables.new(
         request:,
@@ -30,6 +38,16 @@ class ControllerTest < ActionDispatch::IntegrationTest
     ZeroRailsAdapter::ClientMutation.delete_all
     ZeroRailsAdapter::MutationResult.delete_all
     Book.delete_all
+  end
+
+  def test_default_configuration_rejects_requests
+    ZeroRailsAdapter.reset_configuration!
+
+    post_mutate(push_body(mutation(id: 1)))
+
+    assert_response :unauthorized
+    assert_equal "Unauthorized", response.parsed_body["kind"]
+    assert_equal 0, Book.count
   end
 
   def test_mounted_mutate_endpoint_authenticates_and_processes_json
@@ -104,6 +122,23 @@ class ControllerTest < ActionDispatch::IntegrationTest
       {"kind" => "Unauthorized", "origin" => "server", "message" => "token expired"},
       response.parsed_body
     )
+  end
+
+  def test_internal_server_error_is_logged_but_not_exposed
+    log_output = StringIO.new
+    ZeroRailsAdapter.configuration.logger = Logger.new(log_output)
+    ZeroRailsAdapter.configuration.storage_provider = lambda do |_request|
+      raise "private controller failure"
+    end
+
+    post_mutate(push_body(mutation(id: 1)))
+
+    assert_response :internal_server_error
+    assert_equal "PushFailed", response.parsed_body["kind"]
+    assert_equal "internal", response.parsed_body["reason"]
+    assert_equal "Internal server error", response.parsed_body["message"]
+    refute_includes response.body, "private controller failure"
+    assert_includes log_output.string, "private controller failure"
   end
 
   def test_malformed_json_returns_protocol_parse_error

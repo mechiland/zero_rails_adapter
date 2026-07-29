@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "test_helper"
+require "stringio"
 
 class ProcessorTest < ZeroTestCase
   User = Data.define(:id)
@@ -9,6 +10,7 @@ class ProcessorTest < ZeroTestCase
     mutation_name "books|create"
     attribute :title, :string
     validates :title, presence: true
+    authorize_with { true }
 
     def perform
       Book.create!(title:, owner_id: context.current_user.id)
@@ -18,6 +20,10 @@ class ProcessorTest < ZeroTestCase
 
   def setup
     super
+    ZeroRailsAdapter.configuration.authorizer =
+      ->(_context, _mutation) { true }
+    @log_output = StringIO.new
+    ZeroRailsAdapter.configuration.logger = Logger.new(@log_output)
     ZeroRailsAdapter.registry.register(CreateBook)
     @identity = ZeroRailsAdapter::Identity.new(
       user_id: "42",
@@ -54,6 +60,7 @@ class ProcessorTest < ZeroTestCase
     failing = Class.new(ZeroRailsAdapter::Mutator) do
       mutation_name "books|partial_failure"
       attribute :title, :string
+      authorize_with { true }
 
       define_method(:perform) do
         Book.create!(title:, owner_id: 42)
@@ -69,6 +76,108 @@ class ProcessorTest < ZeroTestCase
     assert_equal ["can't be blank"],
       response.dig("mutations", 0, "result", "details", "title")
     assert_equal 1, ZeroRailsAdapter::ClientMutation.last.last_mutation_id
+  end
+
+  def test_programming_error_is_retry_safe_and_same_mutation_can_be_replayed
+    failing = Class.new(ZeroRailsAdapter::Mutator) do
+      mutation_name "books|programming_error"
+      authorize_with { true }
+
+      define_method(:perform) do
+        raise NoMethodError, "private implementation detail"
+      end
+    end
+    ZeroRailsAdapter.registry.register(failing)
+    body = push_body(
+      mutation(id: 1, name: "books|programming_error", args: [{}])
+    )
+
+    response = process(body)
+
+    assert_equal "PushFailed", response["kind"]
+    assert_equal "internal", response["reason"]
+    assert_equal "Internal server error", response["message"]
+    assert_equal(
+      [{"clientID" => "client-1", "id" => 1}],
+      response["mutationIDs"]
+    )
+    refute_includes response.to_json, "private implementation detail"
+    assert_equal 0, ZeroRailsAdapter::ClientMutation.count
+    assert_equal 0, ZeroRailsAdapter::MutationResult.count
+    assert_includes @log_output.string, "private implementation detail"
+
+    repaired = Class.new(ZeroRailsAdapter::Mutator) do
+      mutation_name "books|programming_error"
+      authorize_with { true }
+
+      define_method(:perform) do
+        Book.create!(title: "Recovered", owner_id: 42)
+      end
+    end
+    ZeroRailsAdapter.registry.register(repaired)
+
+    replay = process(body)
+
+    assert_equal "MutateResponse", replay["kind"]
+    assert_equal 1, ZeroRailsAdapter::ClientMutation.last.last_mutation_id
+    assert_equal "Recovered", Book.last.title
+  end
+
+  def test_database_error_is_retry_safe_and_does_not_expose_details
+    failing = Class.new(ZeroRailsAdapter::Mutator) do
+      mutation_name "books|database_error"
+      authorize_with { true }
+
+      define_method(:perform) do
+        raise ActiveRecord::ConnectionNotEstablished,
+          "postgresql://user:secret@example.test/database"
+      end
+    end
+    ZeroRailsAdapter.registry.register(failing)
+
+    response = process(
+      push_body(
+        mutation(id: 1, name: "books|database_error", args: [{}])
+      )
+    )
+
+    assert_equal "PushFailed", response["kind"]
+    assert_equal "database", response["reason"]
+    assert_equal "Database error", response["message"]
+    refute_includes response.to_json, "secret"
+    assert_equal 0, ZeroRailsAdapter::ClientMutation.count
+    assert_equal 0, ZeroRailsAdapter::MutationResult.count
+    assert_includes @log_output.string, "postgresql://user:secret@example.test/database"
+  end
+
+  def test_unknown_argument_is_persisted_as_an_application_failure
+    mutator = Class.new(ZeroRailsAdapter::Mutator) do
+      mutation_name "books|unknown_argument"
+      attribute :title, :string
+      authorize_with { true }
+
+      define_method(:perform) { raise "must not run" }
+    end
+    ZeroRailsAdapter.registry.register(mutator)
+
+    response = process(
+      push_body(
+        mutation(
+          id: 1,
+          name: "books|unknown_argument",
+          args: [{"unexpected" => true}]
+        )
+      )
+    )
+
+    assert_equal "MutateResponse", response["kind"]
+    assert_equal "app", response.dig("mutations", 0, "result", "error")
+    assert_match(
+      "unknown attribute 'unexpected'",
+      response.dig("mutations", 0, "result", "message")
+    )
+    assert_equal 1, ZeroRailsAdapter::ClientMutation.last.last_mutation_id
+    assert_equal 1, ZeroRailsAdapter::MutationResult.count
   end
 
   def test_duplicate_is_not_replayed

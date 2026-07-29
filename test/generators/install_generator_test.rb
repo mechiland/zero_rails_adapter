@@ -18,7 +18,11 @@ class InstallGeneratorTest < Rails::Generators::TestCase
 
     assert_file "config/initializers/zero_rails_adapter.rb" do |contents|
       assert_match "ZeroRailsAdapter.configure", contents
-      assert_match "ZERO_MUTATE_API_KEY", contents
+      assert_match(
+        'key: ENV.fetch("ZERO_MUTATE_API_KEY")',
+        contents
+      )
+      refute_match 'if ENV["ZERO_MUTATE_API_KEY"].present?', contents
     end
     assert_no_migration "db/migrate/create_zero_rails_adapter_tables.rb"
   end
@@ -85,6 +89,8 @@ class MutatorGeneratorTest < Rails::Generators::TestCase
     assert_file "app/mutators/books/create_mutator.rb" do |contents|
       assert_match "class Books::CreateMutator < ZeroRailsAdapter::Mutator", contents
       assert_match 'mutation_name "books.create"', contents
+      assert_match "authorize_with", contents
+      assert_match "false", contents
       assert_match "def perform", contents
     end
   end

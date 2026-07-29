@@ -3,6 +3,16 @@
 module ZeroRailsAdapter
   class Processor
     CLEANUP_MUTATION_NAME = "_zero_cleanupResults"
+    DATABASE_ERROR_MESSAGE = "Database error"
+    INTERNAL_ERROR_MESSAGE = "Internal server error"
+    PERSISTABLE_MUTATION_ERRORS = [
+      ActiveModel::UnknownAttributeError,
+      ActiveModel::ValidationError,
+      ActiveRecord::RecordInvalid,
+      ActiveRecord::RecordNotDestroyed,
+      ActiveRecord::RecordNotFound,
+      ActiveRecord::RecordNotSaved
+    ].freeze
 
     attr_reader :request, :context, :storage
 
@@ -47,16 +57,20 @@ module ZeroRailsAdapter
         mutation_ids: request.mutation_ids.drop(processed_count)
       )
     rescue ActiveRecord::ActiveRecordError => error
+      mutation_ids = request.mutation_ids.drop(processed_count)
+      log_push_failure(error, reason: "database", mutation_ids:)
       push_failed(
         reason: "database",
-        message: error.message,
-        mutation_ids: request.mutation_ids.drop(processed_count)
+        message: DATABASE_ERROR_MESSAGE,
+        mutation_ids:
       )
     rescue StandardError => error
+      mutation_ids = request.mutation_ids.drop(processed_count)
+      log_push_failure(error, reason: "internal", mutation_ids:)
       push_failed(
         reason: "internal",
-        message: error.message,
-        mutation_ids: request.mutation_ids.drop(processed_count)
+        message: INTERNAL_ERROR_MESSAGE,
+        mutation_ids:
       )
     end
 
@@ -84,7 +98,7 @@ module ZeroRailsAdapter
       already_processed_response(mutation, error)
     rescue OutOfOrderMutationError
       raise
-    rescue StandardError => error
+    rescue ApplicationError, *PERSISTABLE_MUTATION_ERRORS => error
       application_error = normalize_application_error(error)
       begin
         persist_failure(mutation, application_error)
@@ -138,8 +152,10 @@ module ZeroRailsAdapter
     def normalize_application_error(error)
       return error if error.is_a?(ApplicationError)
 
-      if error.respond_to?(:record) && error.record.respond_to?(:errors)
-        return ApplicationError.new(error.message, details: error.record.errors.to_hash)
+      model = error.record if error.respond_to?(:record)
+      model ||= error.model if error.respond_to?(:model)
+      if model.respond_to?(:errors)
+        return ApplicationError.new(error.message, details: model.errors.to_hash)
       end
 
       ApplicationError.new(error.message)
@@ -173,6 +189,18 @@ module ZeroRailsAdapter
         "message" => message,
         "mutationIDs" => mutation_ids
       }
+    end
+
+    def log_push_failure(error, reason:, mutation_ids:)
+      ZeroRailsAdapter.configuration.logger&.error(
+        "ZeroRailsAdapter push failed: " \
+        "reason=#{reason} request_id=#{request.request_id.inspect} " \
+        "mutation_ids=#{mutation_ids.inspect} " \
+        "#{error.class}: #{error.message}\n" \
+        "#{Array(error.backtrace).join("\n")}"
+      )
+    rescue StandardError
+      nil
     end
   end
 end

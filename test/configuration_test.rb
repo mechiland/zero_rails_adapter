@@ -49,12 +49,11 @@ class ConfigurationTest < ZeroTestCase
 
     ZeroRailsAdapter.reset_configuration!
 
-    identity = ZeroRailsAdapter.configuration.authenticator.call(Object.new)
-    assert_nil identity.user_id
-    assert_nil identity.current_user
-    assert_equal({}, identity.claims)
-    assert ZeroRailsAdapter.configuration.request_verifier.call(Object.new)
-    assert ZeroRailsAdapter.configuration.authorizer.call(Object.new, Object.new)
+    assert_raises(ZeroRailsAdapter::UnauthorizedError) do
+      ZeroRailsAdapter.configuration.authenticator.call(Object.new)
+    end
+    refute ZeroRailsAdapter.configuration.request_verifier.call(Object.new)
+    refute ZeroRailsAdapter.configuration.authorizer.call(Object.new, Object.new)
     refute ZeroRailsAdapter.configuration.crud_authorizer.call(
       Object.new,
       :create,
@@ -105,6 +104,7 @@ class ConfigurationTest < ZeroTestCase
       attribute :left, :integer
       attribute :right, :integer
       validates :left, :right, presence: true
+      authorize_with { true }
 
       perform do
         {"sum" => left + right}

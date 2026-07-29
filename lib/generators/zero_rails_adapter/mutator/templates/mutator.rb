@@ -7,8 +7,11 @@ class <%= class_name %> < ZeroRailsAdapter::Mutator
   # attribute :title, :string
   # validates :title, presence: true
 
+  authorize_with do |_context|
+    false
+  end
+
   def perform
-    # Use context.current_user, context.user_id, and context.claims for authorization.
     raise NotImplementedError
   end
 end

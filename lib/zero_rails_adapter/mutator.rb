@@ -61,7 +61,9 @@ module ZeroRailsAdapter
 
     def authorize!
       callback = self.class.authorization_callback
-      return true unless callback
+      unless callback
+        raise ForbiddenError, "Mutator authorization is not configured"
+      end
       return true if instance_exec(context, &callback)
 
       raise ForbiddenError, "Mutation is not authorized"

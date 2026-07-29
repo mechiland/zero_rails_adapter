@@ -6,6 +6,8 @@ class CrudDispatcherTest < ZeroTestCase
   def setup
     super
     @identity = ZeroRailsAdapter::Identity.new(user_id: 7, claims: {"role" => "editor"})
+    ZeroRailsAdapter.configuration.authorizer =
+      ->(_context, _mutation) { true }
     ZeroRailsAdapter.configuration.crud_model_provider = -> { [Article] }
     ZeroRailsAdapter.configuration.crud_authorizer =
       ->(_context, _action, _target, _attributes) { true }
@@ -170,6 +172,7 @@ class CrudDispatcherTest < ZeroTestCase
     custom = Class.new(ZeroRailsAdapter::Mutator) do
       mutation_name "articles.insert"
       attribute :id, :string
+      authorize_with { true }
 
       define_method(:perform) { {"custom" => id} }
     end
