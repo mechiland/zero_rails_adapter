@@ -39,10 +39,18 @@ module ZeroRailsAdapter
 
       attr_reader :models, :crud_models
 
-      def initialize(published_schema: nil, crud_models: nil)
+      def initialize(published_schema: nil, crud_models: nil, manual_relationships: nil)
         schema = published_schema || ZeroRailsAdapter.configuration.published_schema.call
-        @published_schema = PublishedSchema.new(schema)
+        @published_schema = PublishedSchema.new(
+          schema,
+          zero_key: ZeroRailsAdapter.configuration.zero_key
+        )
         @models = @published_schema.models.sort_by(&:table_name)
+        relationship_definitions = manual_relationships ||
+          ZeroRailsAdapter.configuration.relationship_provider.call
+        @manual_relationships = Array(relationship_definitions).map do |definition|
+          Relationship.from_definition(definition, published_schema: @published_schema)
+        end
         requested_crud_models = Array(
           crud_models || ZeroRailsAdapter.configuration.crud_model_provider.call
         )
@@ -101,22 +109,20 @@ module ZeroRailsAdapter
       end
 
       def relationship_definitions
-        relationships.group_by(&:first).map do |model, definitions|
-          kinds = definitions.map do |_source, reflection, _destination|
-            reflection.collection? ? "many" : "one"
-          end.uniq.sort.join(", ")
-          entries = definitions.map do |_source, reflection, destination|
-            source_fields, destination_fields =
-              relationship_fields(model, reflection, destination)
-            kind = reflection.collection? ? "many" : "one"
+        relationships.group_by(&:source).map do |model, definitions|
+          kinds = definitions.map(&:kind).uniq.sort.join(", ")
+          entries = definitions.map do |relationship|
+            hops = relationship.hops.map do |hop|
+              [
+                "{",
+                "  sourceField: [#{hop.source_fields.map { |field| quote(field) }.join(', ')}],",
+                "  destSchema: #{variable_name(hop.destination)},",
+                "  destField: [#{hop.destination_fields.map { |field| quote(field) }.join(', ')}],",
+                "}"
+              ].join("\n")
+            end.join(", ")
 
-            [
-              "#{property_name(reflection.name)}: #{kind}({",
-              "  sourceField: [#{source_fields.map { |field| quote(field) }.join(', ')}],",
-              "  destSchema: #{variable_name(destination)},",
-              "  destField: [#{destination_fields.map { |field| quote(field) }.join(', ')}],",
-              "}),"
-            ].join("\n")
+            "#{property_name(relationship.name)}: #{relationship.kind}(#{hops}),"
           end.join("\n")
 
           [
@@ -129,7 +135,7 @@ module ZeroRailsAdapter
 
       def schema_export
         table_vars = models.map { |model| variable_name(model) }.join(", ")
-        relation_vars = relationships.map(&:first).uniq.map do |model|
+        relation_vars = relationships.map(&:source).uniq.map do |model|
           relationship_variable_name(model)
         end.join(", ")
 
@@ -230,6 +236,7 @@ module ZeroRailsAdapter
 
       def mutation_columns(model, action)
         primary = primary_keys(model)
+        immutable = (primary + Array(model.primary_key).compact.map(&:to_s)).uniq
         case action
         when :create
           allowed = generated_attribute_names(model, action)
@@ -241,7 +248,9 @@ module ZeroRailsAdapter
           allowed = generated_attribute_names(model, action)
           columns_for(model).select do |column|
             primary.include?(column.name) ||
-              (!timestamp_column?(column) && allowed.include?(column.name))
+              (!immutable.include?(column.name) &&
+                !timestamp_column?(column) &&
+                allowed.include?(column.name))
           end
         when :destroy
           columns_for(model).select { |column| primary.include?(column.name) }
@@ -350,21 +359,42 @@ module ZeroRailsAdapter
       end
 
       def relationships
-        @relationships ||= models.flat_map do |model|
-          model.reflect_on_all_associations.filter_map do |reflection|
-            next if reflection.polymorphic? || reflection.options[:through]
+        @relationships ||= begin
+          automatic = models.flat_map do |model|
+            model.reflect_on_all_associations.filter_map do |reflection|
+              next if reflection.polymorphic? || reflection.options[:through]
 
-            destination = reflection.klass
-            next unless models.include?(destination)
+              destination = reflection.klass
+              next unless models.include?(destination)
 
-            source_fields, destination_fields =
-              relationship_fields(model, reflection, destination)
-            if source_fields.all? { |field| published_column?(model, field) } &&
-                destination_fields.all? { |field| published_column?(destination, field) }
-              [model, reflection, destination]
+              source_fields, destination_fields =
+                relationship_fields(model, reflection, destination)
+              if source_fields.all? { |field| published_column?(model, field) } &&
+                  destination_fields.all? { |field| published_column?(destination, field) }
+                Relationship.new(
+                  source: model,
+                  name: reflection.name,
+                  kind: reflection.collection? ? :many : :one,
+                  hops: [{
+                    source_fields:,
+                    destination:,
+                    destination_fields:
+                  }],
+                  published_schema: @published_schema
+                )
+              end
+            rescue NameError
+              nil
             end
-          rescue NameError
-            nil
+          end
+
+          manual_keys = @manual_relationships.map do |relationship|
+            [relationship.source, relationship.name]
+          end
+          (automatic.reject do |relationship|
+            manual_keys.include?([relationship.source, relationship.name])
+          end + @manual_relationships).sort_by do |relationship|
+            [relationship.source.table_name, relationship.name]
           end
         end
       end
@@ -389,10 +419,7 @@ module ZeroRailsAdapter
       end
 
       def primary_keys(model)
-        keys = Array(model.primary_key).compact.map(&:to_s)
-        return keys if keys.any?
-
-        raise UnsupportedColumnTypeError, "#{model.name} has no primary key"
+        @published_schema.zero_keys_for(model)
       end
 
       def columns_for(model)

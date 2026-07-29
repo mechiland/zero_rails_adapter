@@ -13,6 +13,8 @@ class ConfigurationTest < ZeroTestCase
     generated_attributes = ->(model, action) { [model, action] }
     published_schema = -> { {Article => %w[id title]} }
     crud_model_provider = -> { [Article] }
+    zero_key = ->(model) { model == Article ? "sync_id" : model.primary_key }
+    relationship_provider = -> { [] }
 
     ZeroRailsAdapter.configure do |config|
       config.authenticator = authenticator
@@ -22,6 +24,8 @@ class ConfigurationTest < ZeroTestCase
       config.generated_attributes = generated_attributes
       config.published_schema = published_schema
       config.crud_model_provider = crud_model_provider
+      config.zero_key = zero_key
+      config.relationship_provider = relationship_provider
       config.transaction_class = Book
     end
 
@@ -34,6 +38,9 @@ class ConfigurationTest < ZeroTestCase
     assert_same published_schema, ZeroRailsAdapter.configuration.published_schema
     assert_same crud_model_provider,
       ZeroRailsAdapter.configuration.crud_model_provider
+    assert_same zero_key, ZeroRailsAdapter.configuration.zero_key
+    assert_same relationship_provider,
+      ZeroRailsAdapter.configuration.relationship_provider
     assert_same Book, ZeroRailsAdapter.configuration.transaction_class
   end
 
@@ -60,6 +67,8 @@ class ConfigurationTest < ZeroTestCase
       ZeroRailsAdapter.configuration.storage_provider.call(request)
     assert_empty ZeroRailsAdapter.configuration.published_schema.call
     assert_empty ZeroRailsAdapter.configuration.crud_model_provider.call
+    assert_equal "id", ZeroRailsAdapter.configuration.zero_key.call(Article)
+    assert_empty ZeroRailsAdapter.configuration.relationship_provider.call
     assert_nil ZeroRailsAdapter.configuration.model_resolver.call("articles")
   end
 

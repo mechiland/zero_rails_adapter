@@ -40,6 +40,18 @@ ZeroRailsAdapter.configure do |config|
   # Keep this empty when writes require domain-specific mutators.
   # config.crud_model_provider = -> { [Article, Comment] }
 
+  # Zero uses this stable key in generated schemas and CRUD update/destroy
+  # lookups. A non-Active Record key must be published and backed by an exact
+  # unique, non-null database index. Composite keys may return an array.
+  # config.zero_key = lambda do |model|
+  #   model == Article ? "sync_id" : model.primary_key
+  # end
+
+  # Add relationships that Rails reflection cannot express safely, including
+  # polymorphic, delegated-type, and through relationships. Definitions may
+  # contain one direct hop or a maximum of two entries under `through`.
+  # config.relationship_provider = -> { [] }
+
   # Authorize generic CRUD independently of Devise/JWT/Pundit/etc. target is
   # the model class for create, and the loaded record for update/destroy.
   # config.crud_authorizer = lambda do |context, action, target, attributes|

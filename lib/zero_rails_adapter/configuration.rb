@@ -5,7 +5,8 @@ module ZeroRailsAdapter
     attr_accessor :authenticator, :request_verifier, :authorizer, :logger,
       :transaction_class, :storage_provider, :crud_authorizer,
       :writable_attributes, :generated_attributes, :model_resolver,
-      :published_schema, :crud_model_provider
+      :published_schema, :crud_model_provider, :zero_key,
+      :relationship_provider
 
     def initialize
       @authenticator = ->(_request) { Identity.new }
@@ -16,6 +17,8 @@ module ZeroRailsAdapter
       @transaction_class = ActiveRecord::Base
       @published_schema = -> { {} }
       @crud_model_provider = -> { [] }
+      @zero_key = ->(model) { model.primary_key }
+      @relationship_provider = -> { [] }
       @model_resolver = lambda do |resource|
         allowed_models = Array(crud_model_provider.call).select do |model|
           active_record_model?(model)

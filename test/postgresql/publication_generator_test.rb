@@ -62,4 +62,16 @@ class PublicationGeneratorTest < ZeroTestCase
 
     assert_match "user_password_reset_keys is an authentication table", error.message
   end
+
+  def test_uses_zero_key_validation_without_dropping_the_database_primary_key
+    ZeroRailsAdapter.configuration.zero_key = lambda do |model|
+      model == Article ? "sync_id" : model.primary_key
+    end
+
+    sql = ZeroRailsAdapter::PostgreSQL::PublicationGenerator.new(
+      published_schema: {Article => %w[id sync_id title]}
+    ).sql
+
+    assert_includes sql, '"articles" ("id", "sync_id", "title")'
+  end
 end

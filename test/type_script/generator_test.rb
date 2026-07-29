@@ -138,6 +138,170 @@ class TypeScriptGeneratorTest < ZeroTestCase
     assert_match "CRUD models must also be published: ArticleEvent", error.message
   end
 
+  def test_uses_the_configured_zero_key_for_schema_and_crud_arguments
+    ZeroRailsAdapter.configuration.zero_key = lambda do |model|
+      model == Article ? "sync_id" : model.primary_key
+    end
+    generator = ZeroRailsAdapter::TypeScript::Generator.new(
+      published_schema: {
+        Article => %w[id sync_id title created_at updated_at]
+      },
+      crud_models: [Article]
+    )
+
+    assert_includes generator.schema, ".primaryKey('sync_id')"
+    assert_includes generator.mutators, "sync_id: z.string()"
+    destroy_args = generator.mutators[/const articlesDestroyArgs.*?\n\}/m]
+    assert_includes destroy_args, "sync_id: z.string()"
+    refute_match(/^\s+id:/, destroy_args)
+    update_args = generator.mutators[/const articlesUpdateArgs.*?\n\}/m]
+    refute_match(/^\s+id:/, update_args)
+  end
+
+  def test_rejects_a_zero_key_without_a_unique_non_null_index
+    ZeroRailsAdapter.configuration.zero_key = ->(_model) { "internal_notes" }
+
+    error = assert_raises(ZeroRailsAdapter::UnsafePublicationError) do
+      ZeroRailsAdapter::TypeScript::Generator.new(
+        published_schema: {Article => %w[id internal_notes]}
+      )
+    end
+
+    assert_match "Zero key internal_notes must be backed by a unique, non-null index",
+      error.message
+  end
+
+  def test_adds_a_manual_direct_relationship
+    output = ZeroRailsAdapter::TypeScript::Generator.new(
+      published_schema: {
+        Article => %w[id title],
+        ArticleEvent => %w[id article_id event]
+      },
+      manual_relationships: [{
+        source: Article,
+        name: :audit_trail,
+        kind: :many,
+        source_fields: %w[id],
+        destination: ArticleEvent,
+        destination_fields: %w[article_id]
+      }]
+    ).schema
+
+    assert_includes output, "audit_trail: many({"
+    assert_includes output, "sourceField: ['id']"
+    assert_includes output, "destSchema: articleEvents"
+    assert_includes output, "destField: ['article_id']"
+  end
+
+  def test_reads_manual_relationships_from_the_configured_provider
+    ZeroRailsAdapter.configuration.relationship_provider = -> do
+      [{
+        source: Article,
+        name: :audit_trail,
+        kind: :many,
+        source_fields: %w[id],
+        destination: ArticleEvent,
+        destination_fields: %w[article_id]
+      }]
+    end
+
+    output = ZeroRailsAdapter::TypeScript::Generator.new(
+      published_schema: {
+        Article => %w[id title],
+        ArticleEvent => %w[id article_id event]
+      }
+    ).schema
+
+    assert_includes output, "audit_trail: many({"
+  end
+
+  def test_adds_a_two_hop_manual_relationship
+    output = ZeroRailsAdapter::TypeScript::Generator.new(
+      published_schema: {
+        Article => %w[id title],
+        ArticleLabel => %w[id article_id label_id],
+        Label => %w[id name]
+      },
+      manual_relationships: [{
+        source: Article,
+        name: :labels,
+        kind: :many,
+        through: [
+          {
+            source_fields: %w[id],
+            destination: ArticleLabel,
+            destination_fields: %w[article_id]
+          },
+          {
+            source_fields: %w[label_id],
+            destination: Label,
+            destination_fields: %w[id]
+          }
+        ]
+      }]
+    ).schema
+
+    assert_match(/labels: many\(\{.*destSchema: articleLabels.*\}, \{.*destSchema: labels/m,
+      output)
+  end
+
+  def test_rejects_a_manual_relationship_with_more_than_two_hops
+    error = assert_raises(ZeroRailsAdapter::InvalidRelationshipError) do
+      ZeroRailsAdapter::TypeScript::Generator.new(
+        published_schema: {
+          Article => %w[id],
+          ArticleLabel => %w[id article_id label_id],
+          Label => %w[id]
+        },
+        manual_relationships: [{
+          source: Article,
+          name: :invalid,
+          kind: :many,
+          through: [
+            {
+              source_fields: %w[id],
+              destination: ArticleLabel,
+              destination_fields: %w[article_id]
+            },
+            {
+              source_fields: %w[label_id],
+              destination: Label,
+              destination_fields: %w[id]
+            },
+            {
+              source_fields: %w[id],
+              destination: Article,
+              destination_fields: %w[id]
+            }
+          ]
+        }]
+      )
+    end
+
+    assert_match "supports at most two hops", error.message
+  end
+
+  def test_rejects_a_manual_relationship_that_uses_an_unpublished_field
+    error = assert_raises(ZeroRailsAdapter::InvalidRelationshipError) do
+      ZeroRailsAdapter::TypeScript::Generator.new(
+        published_schema: {
+          Article => %w[id title],
+          ArticleEvent => %w[id article_id]
+        },
+        manual_relationships: [{
+          source: Article,
+          name: :private_events,
+          kind: :many,
+          source_fields: %w[internal_notes],
+          destination: ArticleEvent,
+          destination_fields: %w[article_id]
+        }]
+      )
+    end
+
+    assert_match "source field internal_notes is not published", error.message
+  end
+
   def test_generated_attributes_can_hide_client_writable_fields
     ZeroRailsAdapter.configuration.generated_attributes =
       ->(_model, _action) { %w[id title] }

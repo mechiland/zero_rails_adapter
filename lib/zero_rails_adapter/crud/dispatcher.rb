@@ -68,7 +68,8 @@ module ZeroRailsAdapter
       def update(model, attributes)
         record = find_record!(model, attributes)
         authorize!(:update, record, attributes)
-        changes = writable(model, :update, attributes).except(*primary_keys(model))
+        immutable_keys = zero_keys(model) + Array(model.primary_key).compact.map(&:to_s)
+        changes = writable(model, :update, attributes).except(*immutable_keys)
         record.update!(changes)
         nil
       end
@@ -81,21 +82,26 @@ module ZeroRailsAdapter
       end
 
       def find_record!(model, attributes)
-        keys = primary_keys(model)
+        keys = zero_keys(model)
         values = attributes.slice(*keys)
         missing = keys - values.keys
         if missing.any?
           raise ValidationError.new(
-            "Missing primary key attributes: #{missing.join(', ')}",
-            details: {"primaryKey" => missing}
+            "Missing Zero key attributes: #{missing.join(', ')}",
+            details: {"zeroKey" => missing}
           )
         end
 
         model.find_by!(values)
       end
 
-      def primary_keys(model)
-        Array(model.primary_key).map(&:to_s)
+      def zero_keys(model)
+        keys = Array(
+          ZeroRailsAdapter.configuration.zero_key.call(model)
+        ).compact.map(&:to_s)
+        return keys if keys.any?
+
+        raise ValidationError, "#{model.name} must define at least one Zero key"
       end
 
       def authorize!(action, target, attributes)

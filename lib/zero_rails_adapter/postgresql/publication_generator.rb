@@ -8,7 +8,8 @@ module ZeroRailsAdapter
       def initialize(name: DEFAULT_NAME, published_schema: nil)
         @name = name.to_s
         @published_schema = PublishedSchema.new(
-          published_schema || ZeroRailsAdapter.configuration.published_schema.call
+          published_schema || ZeroRailsAdapter.configuration.published_schema.call,
+          zero_key: ZeroRailsAdapter.configuration.zero_key
         )
       end
 
