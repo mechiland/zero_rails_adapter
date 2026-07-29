@@ -5,5 +5,7 @@
 /coverage/
 /pkg/
 /tmp/
+/test/contract/generated/
+/test/contract/node_modules/
 *.gem
 Gemfile.lock
