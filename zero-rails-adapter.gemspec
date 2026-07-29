@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.authors = ["Zero Rails Adapter contributors"]
   spec.summary = "A Rails 8 Active Record adapter for Rocicorp Zero"
   spec.description = "Map Rocicorp Zero CRUD mutations to Active Record models, transactions, validations, and callbacks."
-  spec.homepage = "https://zero.rocicorp.dev/docs/mutators"
+  spec.homepage = "https://github.com/mechiland/zero_rails_adapter"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 4.0"
 
@@ -21,6 +21,9 @@ Gem::Specification.new do |spec|
 
   spec.metadata = {
     "rubygems_mfa_required" => "true",
-    "documentation_uri" => spec.homepage
+    "source_code_uri" => spec.homepage,
+    "bug_tracker_uri" => "#{spec.homepage}/issues",
+    "changelog_uri" => "#{spec.homepage}/blob/main/CHANGELOG.md",
+    "documentation_uri" => "#{spec.homepage}#readme"
   }
 end
