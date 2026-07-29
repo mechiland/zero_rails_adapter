@@ -28,6 +28,7 @@ class TypeScriptRailsGeneratorTest < Rails::Generators::TestCase
   tests ZeroRailsAdapter::Generators::TypeScriptGenerator
   destination File.expand_path("../../tmp/typescript_generator", __dir__)
   setup :prepare_destination
+  setup { ZeroRailsAdapter.reset_configuration! }
 
   def test_generates_schema_and_generic_crud_mutators
     ZeroRailsAdapter.configuration.published_schema = lambda do
@@ -56,6 +57,7 @@ class PublicationRailsGeneratorTest < Rails::Generators::TestCase
   tests ZeroRailsAdapter::Generators::PublicationGenerator
   destination File.expand_path("../../tmp/publication_generator", __dir__)
   setup :prepare_destination
+  setup { ZeroRailsAdapter.reset_configuration! }
 
   def test_generates_a_reviewable_publication_sql_file
     ZeroRailsAdapter.configuration.published_schema =
