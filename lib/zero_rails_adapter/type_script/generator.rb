@@ -37,13 +37,23 @@ module ZeroRailsAdapter
         jsonb: "z.json()"
       }.freeze
 
-      attr_reader :models
+      attr_reader :models, :crud_models
 
-      def initialize(models: nil)
-        @models = Array(models || ZeroRailsAdapter.configuration.model_provider.call)
-          .select { |model| active_record_model?(model) }
-          .uniq
-          .sort_by(&:table_name)
+      def initialize(published_schema: nil, crud_models: nil)
+        schema = published_schema || ZeroRailsAdapter.configuration.published_schema.call
+        @published_schema = PublishedSchema.new(schema)
+        @models = @published_schema.models.sort_by(&:table_name)
+        requested_crud_models = Array(
+          crud_models || ZeroRailsAdapter.configuration.crud_model_provider.call
+        )
+        unpublished = requested_crud_models - models
+        if unpublished.any?
+          labels = unpublished.map { |model| model.respond_to?(:name) ? model.name : model.inspect }
+          raise UnsafePublicationError,
+            "CRUD models must also be published: #{labels.join(', ')}"
+        end
+
+        @crud_models = requested_crud_models.uniq.sort_by(&:table_name)
       end
 
       def schema
@@ -75,7 +85,7 @@ module ZeroRailsAdapter
 
       def table_definitions
         models.map do |model|
-          columns = model.columns.map do |column|
+          columns = columns_for(model).map do |column|
             "    #{property_name(column.name)}: #{zero_type(model, column)},"
           end.join("\n")
           keys = primary_keys(model).map { |key| quote(key) }.join(", ")
@@ -140,7 +150,7 @@ module ZeroRailsAdapter
       end
 
       def argument_schemas
-        models.flat_map do |model|
+        crud_models.flat_map do |model|
           [
             zod_schema(model, :create),
             zod_schema(model, :update),
@@ -162,7 +172,7 @@ module ZeroRailsAdapter
       end
 
       def mutator_export
-        tables = models.map do |model|
+        tables = crud_models.map do |model|
           variable = variable_name(model)
           table = property_name(model.table_name)
           create_values = create_insert_values(model)
@@ -193,8 +203,8 @@ module ZeroRailsAdapter
 
       def create_insert_values(model)
         additions = []
-        additions << "created_at: now" if model.column_names.include?("created_at")
-        additions << "updated_at: now" if model.column_names.include?("updated_at")
+        additions << "created_at: now" if published_column?(model, "created_at")
+        additions << "updated_at: now" if published_column?(model, "updated_at")
         defaulted_columns(model).each do |column|
           value = if generated_attribute_names(model, :create).include?(column.name)
             "args.#{property_name(column.name)} ?? #{typescript_default(column)}"
@@ -208,7 +218,7 @@ module ZeroRailsAdapter
 
       def update_insert_values(model)
         additions = []
-        additions << "updated_at: Date.now()" if model.column_names.include?("updated_at")
+        additions << "updated_at: Date.now()" if published_column?(model, "updated_at")
         object_with_additions(additions)
       end
 
@@ -223,18 +233,18 @@ module ZeroRailsAdapter
         case action
         when :create
           allowed = generated_attribute_names(model, action)
-          model.columns.select do |column|
+          columns_for(model).select do |column|
             !timestamp_column?(column) &&
               (primary.include?(column.name) || allowed.include?(column.name))
           end
         when :update
           allowed = generated_attribute_names(model, action)
-          model.columns.select do |column|
+          columns_for(model).select do |column|
             primary.include?(column.name) ||
               (!timestamp_column?(column) && allowed.include?(column.name))
           end
         when :destroy
-          model.columns.select { |column| primary.include?(column.name) }
+          columns_for(model).select { |column| primary.include?(column.name) }
         end
       end
 
@@ -250,7 +260,7 @@ module ZeroRailsAdapter
 
       def defaulted_columns(model)
         primary = primary_keys(model)
-        model.columns.select do |column|
+        columns_for(model).select do |column|
           !primary.include?(column.name) &&
             !timestamp_column?(column) &&
             !column.null &&
@@ -264,7 +274,7 @@ module ZeroRailsAdapter
           return column.null ? "#{type}.optional()" : type
         end
 
-        type = enum_values(model, column)&.then do |values|
+        type = native_enum_values(model, column)&.then do |values|
           "enumeration<#{values.map { |value| quote(value) }.join(' | ')}>()"
         end
         type ||= mapped_type(SCHEMA_TYPES, model, column)
@@ -273,7 +283,7 @@ module ZeroRailsAdapter
       end
 
       def zod_type(model, column, action)
-        values = enum_values(model, column)
+        values = native_enum_values(model, column)
         type = if column.respond_to?(:array) && column.array
           "z.array(#{mapped_type(ZOD_TYPES, model, column)})"
         elsif values
@@ -300,18 +310,24 @@ module ZeroRailsAdapter
         end
       end
 
-      def enum_values(model, column)
+      def native_enum_values(model, column)
+        return unless column.type.to_sym == :enum
+
         definition = model.defined_enums[column.name]
-        definition&.keys
+        return definition.keys if definition
+
+        enum_types = model.connection.enum_types.to_h
+        enum_types[column.sql_type] ||
+          raise(UnsupportedColumnTypeError,
+            "Cannot read PostgreSQL enum values for #{model.name}.#{column.name}")
       end
 
       def schema_imports
         imports = %w[createSchema table]
         imports << "relationships" if relationships.any?
-        imports << "enumeration" if models.any? { |model| model.defined_enums.any? }
         models.each do |model|
-          model.columns.each do |column|
-            imports << if enum_values(model, column)
+          columns_for(model).each do |column|
+            imports << if native_enum_values(model, column)
               "enumeration"
             elsif column.respond_to?(:array) && column.array
               "json"
@@ -339,7 +355,14 @@ module ZeroRailsAdapter
             next if reflection.polymorphic? || reflection.options[:through]
 
             destination = reflection.klass
-            [model, reflection, destination] if models.include?(destination)
+            next unless models.include?(destination)
+
+            source_fields, destination_fields =
+              relationship_fields(model, reflection, destination)
+            if source_fields.all? { |field| published_column?(model, field) } &&
+                destination_fields.all? { |field| published_column?(destination, field) }
+              [model, reflection, destination]
+            end
           rescue NameError
             nil
           end
@@ -370,6 +393,14 @@ module ZeroRailsAdapter
         return keys if keys.any?
 
         raise UnsupportedColumnTypeError, "#{model.name} has no primary key"
+      end
+
+      def columns_for(model)
+        @published_schema.columns_for(model)
+      end
+
+      def published_column?(model, name)
+        columns_for(model).any? { |column| column.name == name.to_s }
       end
 
       def relationship_variable_name(model)

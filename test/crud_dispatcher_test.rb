@@ -6,6 +6,9 @@ class CrudDispatcherTest < ZeroTestCase
   def setup
     super
     @identity = ZeroRailsAdapter::Identity.new(user_id: 7, claims: {"role" => "editor"})
+    ZeroRailsAdapter.configuration.crud_model_provider = -> { [Article] }
+    ZeroRailsAdapter.configuration.crud_authorizer =
+      ->(_context, _action, _target, _attributes) { true }
   end
 
   def test_create_calls_active_record_and_its_callbacks

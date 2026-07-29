@@ -73,7 +73,48 @@ The adapter uses Zero's validated `schema` parameter to build schema-qualified
 Active Record classes for those tables, then writes application data and the
 LMID in the same transaction.
 
+## Explicit Publication Schema
+
+The adapter fails closed. No Active Record model or column is published, added
+to generated TypeScript, or exposed to generic CRUD by default.
+
+Declare both the tables and columns that may be replicated:
+
+```ruby
+ZeroRailsAdapter.configure do |config|
+  config.published_schema = lambda do
+    {
+      Article => %w[id title body author_id created_at updated_at],
+      Comment => %w[id article_id body author_id created_at updated_at]
+    }
+  end
+end
+```
+
+The callable is evaluated when code is generated, so it remains safe across
+Rails development reloads. Primary key columns must be present. Unknown
+columns, known credential columns such as `password_hash` and `token_digest`,
+Active Storage and Action Mailbox internal tables, and PostgreSQL types that
+Zero cannot replicate are rejected.
+
+Generate a reviewable, column-limited PostgreSQL publication:
+
+```sh
+bin/rails generate zero_rails_adapter:publication zero_data
+```
+
+This writes `db/zero_publication.sql`; it does not execute DDL automatically.
+Apply the SQL through the application's normal migration or operations process,
+then configure:
+
+```sh
+ZERO_APP_PUBLICATIONS=zero_data
+```
+
 ## Generic Active Record CRUD
+
+Generic CRUD is a separate, opt-in capability. Publishing a model never makes
+it writable.
 
 This client-side mutation:
 
@@ -101,14 +142,16 @@ Configure the models exposed to generic CRUD explicitly:
 
 ```ruby
 ZeroRailsAdapter.configure do |config|
-  config.model_provider = -> { [Article, Comment, Project] }
+  config.crud_model_provider = -> { [Article, Comment] }
 end
 ```
 
-`model_provider` is both the CRUD allowlist and the source used by the
-TypeScript generator. By default, the adapter eager-loads the Rails application
-and returns every named, non-abstract Active Record model outside the adapter
-itself. An explicit allowlist is recommended in production.
+Models absent from `crud_model_provider` cannot be resolved by generic CRUD.
+The default provider returns an empty list, and the default `crud_authorizer`
+also rejects every operation. Applications must opt into both model resolution
+and authorization. Applications with aggregate operations, tenant-scoped
+commands, soft deletion, or other domain behavior should leave the provider
+empty and use custom mutators.
 
 If a table cannot be resolved through Rails naming conventions, replace the
 resolver:
@@ -128,14 +171,13 @@ hand:
 bin/rails generate zero_rails_adapter:typescript app/javascript/zero
 ```
 
-The generator reflects on the models returned by `model_provider` in the Rails
-runtime and writes:
+The generator reflects on `published_schema` in the Rails runtime and writes:
 
 - `schema.ts`, containing tables, columns, nullability, primary keys, and
   safely inferred `belongs_to`, `has_one`, and `has_many` relationships.
-- `mutators.ts`, containing `create`, `update`, and `destroy` for every table,
-  using Zero's current `defineMutator` / `defineMutators` API and Zod argument
-  schemas.
+- `mutators.ts`, containing `create`, `update`, and `destroy` only for models
+  returned by `crud_model_provider`, using Zero's current `defineMutator` /
+  `defineMutators` API and Zod argument schemas.
 
 Run the generator again after changing Rails migrations or model associations.
 The output can live in Rails' JavaScript directory or be written directly into
@@ -152,10 +194,13 @@ The default mappings follow Zero's PostgreSQL type conventions:
 - boolean → `boolean()`
 - date/time/datetime/timestamp → `number()`
 - json/jsonb → `json()`
-- Active Record enum → `enumeration<...>()`
+- integer-backed Active Record enum → `number()`
+- string-backed Active Record enum → `string()`
+- PostgreSQL native enum → `enumeration<...>()`
 
 Nullable columns use `.optional()`. Rails timestamps use `Date.now()` for the
-optimistic client write and remain managed normally by Rails on the server.
+optimistic client write and are Unix epoch milliseconds in Zero. They remain
+managed normally by Rails on the server.
 The generator raises a descriptive error for a column that cannot be mapped
 reliably instead of emitting an incorrect type.
 

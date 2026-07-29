@@ -51,6 +51,55 @@ class ZeroSchemaPostgresqlTest < ZeroTestCase
     assert_equal "app", JSON.parse(result["result"]).fetch("error")
   end
 
+  def test_generates_enumeration_only_for_a_native_postgresql_enum
+    connection = ActiveRecord::Base.connection
+    connection.execute("CREATE TYPE zero_review_mood AS ENUM ('calm', 'urgent')")
+    connection.execute <<~SQL
+      CREATE TABLE native_enum_records (
+        id uuid PRIMARY KEY,
+        mood zero_review_mood NOT NULL
+      )
+    SQL
+    model = Class.new(ActiveRecord::Base) do
+      self.table_name = "native_enum_records"
+    end
+
+    generator = ZeroRailsAdapter::TypeScript::Generator.new(
+      published_schema: {model => %w[id mood]},
+      crud_models: [model]
+    )
+
+    assert_includes generator.schema, "mood: enumeration<'calm' | 'urgent'>()"
+    assert_includes generator.mutators, "mood: z.enum(['calm', 'urgent'])"
+  ensure
+    connection&.execute("DROP TABLE IF EXISTS native_enum_records")
+    connection&.execute("DROP TYPE IF EXISTS zero_review_mood")
+  end
+
+  def test_publication_rejects_a_zero_unsupported_postgresql_type
+    connection = ActiveRecord::Base.connection
+    connection.execute("CREATE EXTENSION IF NOT EXISTS citext")
+    connection.execute <<~SQL
+      CREATE TABLE unsupported_type_records (
+        id uuid PRIMARY KEY,
+        email citext NOT NULL
+      )
+    SQL
+    model = Class.new(ActiveRecord::Base) do
+      self.table_name = "unsupported_type_records"
+    end
+
+    error = assert_raises(ZeroRailsAdapter::UnsafePublicationError) do
+      ZeroRailsAdapter::PostgreSQL::PublicationGenerator.new(
+        published_schema: {model => %w[id email]}
+      ).sql
+    end
+
+    assert_match "email uses unsupported PostgreSQL type citext", error.message
+  ensure
+    connection&.execute("DROP TABLE IF EXISTS unsupported_type_records")
+  end
+
   private
 
   def postgresql?
