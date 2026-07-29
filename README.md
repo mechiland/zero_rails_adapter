@@ -97,6 +97,21 @@ columns, known credential columns such as `password_hash` and `token_digest`,
 Active Storage and Action Mailbox internal tables, and PostgreSQL types that
 Zero cannot replicate are rejected.
 
+By default, a model's Zero key is its Active Record primary key. Applications
+may use a separate stable synchronization key:
+
+```ruby
+config.zero_key = lambda do |model|
+  model == Article ? "sync_id" : model.primary_key
+end
+```
+
+A separate Zero key must be included in `published_schema` and backed by an
+exact unique, non-null database index. Composite Zero keys may be returned as
+an array. The database primary key must still be published because PostgreSQL
+uses it as the table's replica identity; it is not silently replaced by the
+Zero key.
+
 Generate a reviewable, column-limited PostgreSQL publication:
 
 ```sh
@@ -133,8 +148,9 @@ Article.create!(id: "...", title: "Rails and Zero")
 ```
 
 For `update` and `destroy`, the adapter first loads the record using the
-model's primary key, including composite primary keys, and then calls
-`update!` or `destroy!`. The bang methods are intentional: a validation,
+configured Zero key, including composite keys, and then calls `update!` or
+`destroy!`. Neither the Zero key nor the Active Record primary key can be
+changed by generic update. The bang methods are intentional: a validation,
 callback, or database-constraint failure rolls back the complete business
 transaction and produces a structured Zero application error.
 
@@ -173,7 +189,7 @@ bin/rails generate zero_rails_adapter:typescript app/javascript/zero
 
 The generator reflects on `published_schema` in the Rails runtime and writes:
 
-- `schema.ts`, containing tables, columns, nullability, primary keys, and
+- `schema.ts`, containing tables, columns, nullability, Zero keys, and
   safely inferred `belongs_to`, `has_one`, and `has_many` relationships.
 - `mutators.ts`, containing `create`, `update`, and `destroy` only for models
   returned by `crud_model_provider`, using Zero's current `defineMutator` /
@@ -186,6 +202,48 @@ an adjacent Next.js application:
 ```sh
 bin/rails generate zero_rails_adapter:typescript ../web/src/zero
 ```
+
+Rails cannot safely infer every Zero relationship. Add delegated-type,
+polymorphic, custom, or through relationships explicitly:
+
+```ruby
+config.relationship_provider = lambda do
+  [
+    {
+      source: Recording,
+      name: :task,
+      kind: :one,
+      source_fields: %w[recordable_id],
+      destination: Task,
+      destination_fields: %w[id]
+    },
+    {
+      source: Article,
+      name: :labels,
+      kind: :many,
+      through: [
+        {
+          source_fields: %w[id],
+          destination: ArticleLabel,
+          destination_fields: %w[article_id]
+        },
+        {
+          source_fields: %w[label_id],
+          destination: Label,
+          destination_fields: %w[id]
+        }
+      ]
+    }
+  ]
+end
+```
+
+Every model and field in a manual relationship must be published. Zero
+supports at most two relationship hops. A polymorphic or delegated-type
+relationship also needs an application invariant or a published discriminator
+or safe mirror column that prevents IDs belonging to another type from
+matching; the adapter does not guess that predicate. A manual definition with
+the same source and name replaces an inferred relationship.
 
 The default mappings follow Zero's PostgreSQL type conventions:
 

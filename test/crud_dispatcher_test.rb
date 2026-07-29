@@ -126,6 +126,46 @@ class CrudDispatcherTest < ZeroTestCase
     refute Article.find("article-1").published?
   end
 
+  def test_update_finds_by_zero_key_without_allowing_primary_key_changes
+    ZeroRailsAdapter.configuration.zero_key = lambda do |model|
+      model == Article ? "sync_id" : model.primary_key
+    end
+    Article.create!(id: "article-1", sync_id: "sync-1", title: "Before")
+
+    response = process(
+      mutation(
+        id: 1,
+        name: "articles.update",
+        args: [{
+          "sync_id" => "sync-1",
+          "id" => "replacement-id",
+          "title" => "After"
+        }]
+      )
+    )
+
+    assert_equal({}, response.dig("mutations", 0, "result"))
+    assert_equal "After", Article.find("article-1").title
+    refute Article.exists?("replacement-id")
+  end
+
+  def test_destroy_finds_by_zero_key
+    ZeroRailsAdapter.configuration.zero_key = lambda do |model|
+      model == Article ? "sync_id" : model.primary_key
+    end
+    Article.create!(id: "article-1", sync_id: "sync-1", title: "Delete me")
+
+    process(
+      mutation(
+        id: 1,
+        name: "articles.destroy",
+        args: [{"sync_id" => "sync-1"}]
+      )
+    )
+
+    refute Article.exists?("article-1")
+  end
+
   def test_explicit_custom_mutator_takes_precedence_over_crud_bridge
     custom = Class.new(ZeroRailsAdapter::Mutator) do
       mutation_name "articles.insert"

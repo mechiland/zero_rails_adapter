@@ -22,13 +22,14 @@ module ZeroRailsAdapter
 
     attr_reader :models
 
-    def initialize(mapping)
+    def initialize(mapping, zero_key: ZeroRailsAdapter.configuration.zero_key)
       value = mapping.respond_to?(:call) ? mapping.call : mapping
       unless value.respond_to?(:to_h)
         raise UnsafePublicationError,
           "Published schema must be a model-to-columns mapping"
       end
 
+      @zero_key = zero_key
       @columns_by_model = value.to_h.each_with_object({}) do |(model, names), result|
         validate_model!(model)
         result[model] = validate_columns!(model, names)
@@ -46,6 +47,14 @@ module ZeroRailsAdapter
 
     def columns_for(model)
       @columns_by_model.fetch(model)
+    end
+
+    def zero_keys_for(model)
+      keys = Array(@zero_key.call(model)).compact.map(&:to_s)
+      return keys.freeze if keys.any?
+
+      label = model.name.presence || model.table_name
+      raise UnsafePublicationError, "#{label} must define at least one Zero key"
     end
 
     private
@@ -102,7 +111,33 @@ module ZeroRailsAdapter
           "#{missing_keys.join(', ')}"
       end
 
+      validate_zero_key!(model, names, label)
       columns.freeze
+    end
+
+    def validate_zero_key!(model, published_names, label)
+      keys = zero_keys_for(model)
+      missing_keys = keys - published_names
+      if missing_keys.any?
+        key_label = missing_keys.one? ? "column" : "columns"
+        raise UnsafePublicationError,
+          "#{label} publication must include Zero key #{key_label} " \
+          "#{missing_keys.join(', ')}"
+      end
+
+      active_record_keys = Array(model.primary_key).compact.map(&:to_s)
+      return if keys == active_record_keys
+
+      columns = keys.map { |key| model.columns_hash.fetch(key) }
+      unique_index = model.connection.indexes(model.table_name).any? do |index|
+        index.unique &&
+          index.where.blank? &&
+          Array(index.columns).map(&:to_s) == keys
+      end
+      return if columns.none?(&:null) && unique_index
+
+      raise UnsafePublicationError,
+        "#{label} Zero key #{keys.join(', ')} must be backed by a unique, non-null index"
     end
   end
 end
