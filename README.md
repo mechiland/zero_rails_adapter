@@ -25,7 +25,7 @@ mass-assignment policies are all configurable callable interfaces.
 - Ruby 4.0 or newer
 - Rails 8.0 or newer
 - PostgreSQL, the upstream database supported by Zero
-- Current `@rocicorp/zero` and `zero-cache` releases
+- `@rocicorp/zero` and `zero-cache` from the same supported release
 
 The Zero-managed `schema.clients` and `schema.mutations` tables and the
 application tables must use the same database connection. In a Rails
@@ -436,6 +436,21 @@ Run the complete contract suite against a dedicated PostgreSQL test database:
 DATABASE_URL=postgres://localhost/zero_rails_adapter_test bundle exec rake test
 ```
 
+The repository also locks `@rocicorp/zero` and the `zero-cache` CLI to the
+exact same `1.8.0` package in `test/contract/package-lock.json`. Run the full
+wire and replication contract with Node 24+ and Docker:
+
+```sh
+bundle exec rake contract
+```
+
+That task compiles the generated TypeScript, starts PostgreSQL with logical
+replication, starts the real zero-cache and Rails mutation endpoint, then uses
+a Zero client to mutate and query replicated rows. The generated fixture
+includes a separate Zero key and a two-hop relationship. The task also verifies
+LMID advancement, duplicate-mutation handling, failure skipping, and
+`_zero_cleanupResults`. The contract runs as its own CI job.
+
 See [`examples/nextjs`](examples/nextjs) for a Next.js integration fixture.
 
 ## References
@@ -443,5 +458,6 @@ See [`examples/nextjs`](examples/nextjs) for a Next.js integration fixture.
 - [Zero custom mutators](https://zero.rocicorp.dev/docs/mutators)
 - [Zero schema](https://zero.rocicorp.dev/docs/schema)
 - [Zero PostgreSQL support](https://zero.rocicorp.dev/docs/postgres-support)
+- [Zero 1.8 release notes](https://zero.rocicorp.dev/docs/release-notes/1.8)
 - [Zero `process-mutations.ts`](https://github.com/rocicorp/mono/blob/main/packages/zero-server/src/process-mutations.ts)
 - [Server implementation plan](https://jeremykreutzbender.com/blog/server-implementation-plan-rocicorp-zero-custom-mutators)
