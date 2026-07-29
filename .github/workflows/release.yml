@@ -1,0 +1,30 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: release
+
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+          ruby-version: "4.0"
+
+      - name: Verify tag matches gem version
+        run: test "$GITHUB_REF_NAME" = "v$(ruby -Ilib -rzero_rails_adapter/version -e 'print ZeroRailsAdapter::VERSION')"
+
+      - uses: rubygems/release-gem@v1
