@@ -3,6 +3,8 @@
 `zero-rails-adapter` is a mountable Rails Engine that maps Rocicorp Zero custom
 mutations directly to existing Active Record models.
 
+See the [changelog](CHANGELOG.md) for release notes and upgrade instructions.
+
 The default CRUD path does not require a Ruby Mutator class for every model:
 
 | Zero mutation | Rails call |
